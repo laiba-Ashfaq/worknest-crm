@@ -1,0 +1,519 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  phone        String?
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships     WorkspaceMembership[]
+  auditLogs       AuditLog[]
+  userPreferences UserPreference[]
+}
+
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  timezone  String   @default("Asia/Karachi")
+  currency  String   @default("PKR")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships        WorkspaceMembership[]
+  roles              Role[]
+  contacts           Contact[]
+  companies          Company[]
+  leads              Lead[]
+  opportunities      Opportunity[]
+  pipelines          Pipeline[]
+  pipelineStages     PipelineStage[]
+  customFields       CustomFieldDefinition[]
+  assignmentRules    AssignmentRule?
+  recoveryQueueItems RecoveryQueue[]
+  conversations      Conversation[]
+  appointments       Appointment[]
+  payments           Payment[]
+  integrationConfigs IntegrationConfig[]
+  integrationLogs    IntegrationLog[]
+  auditLogs          AuditLog[]
+  durableJobs        DurableJob[]
+  notifications      Notification[]
+  savedFilters       SavedFilter[]
+}
+
+model WorkspaceMembership {
+  id                  String   @id @default(uuid())
+  workspaceId         String
+  userId              String
+  roleId              String
+  status              String   @default("ACTIVE") // ACTIVE, INVITED, SUSPENDED
+  availability        String   @default("AVAILABLE") // AVAILABLE, BUSY, ON_LEAVE, OFFLINE
+  availabilityReason  String?
+  maxOpenLeads        Int      @default(15)
+  currentOpenLeads    Int      @default(0)
+  lastAssignedAt      DateTime?
+  googleCalendarToken String?  // Store OAuth tokens securely
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role               Role            @relation(fields: [roleId], references: [id])
+  assignedContacts   Contact[]       @relation("AssignedRep")
+  assignedLeads      Lead[]          @relation("AssignedLeadRep")
+  assignedOpps       Opportunity[]   @relation("AssignedOppRep")
+  hostedAppointments Appointment[]   @relation("HostRep")
+  notifications      Notification[]
+
+  @@unique([workspaceId, userId])
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String   // Owner, Admin, Manager, Employee
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberships     WorkspaceMembership[]
+  rolePermissions RolePermission[]
+
+  @@unique([workspaceId, name])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  category    String
+  description String?
+
+  rolePermissions RolePermission[]
+}
+
+model RolePermission {
+  id           String @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model Contact {
+  id                    String   @id @default(uuid())
+  workspaceId           String
+  name                  String
+  email                 String?
+  phone                 String   // Normalized Pakistani +92 or International
+  companyId             String?
+  leadSource            String   @default("WEBSITE")
+  tags                  String   @default("[]") // JSON string of tags
+  assignedMembershipId  String?
+  notes                 String?
+  consentStatus         String   @default("OPTED_IN") // OPTED_IN, OPTED_OUT
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  company       Company?             @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  assignedRep   WorkspaceMembership? @relation("AssignedRep", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  leads         Lead[]
+  opportunities Opportunity[]
+  conversations Conversation[]
+  appointments  Appointment[]
+  payments      Payment[]
+}
+
+model Company {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  industry    String?
+  website     String?
+  phone       String?
+  email       String?
+  address     String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts      Contact[]
+  opportunities Opportunity[]
+}
+
+model Lead {
+  id                         String    @id @default(uuid())
+  workspaceId                String
+  contactId                  String
+  title                      String
+  source                     String    @default("PUBLIC_FORM") // PUBLIC_FORM, WHATSAPP, MANUAL
+  status                     String    @default("UNASSIGNED") // UNASSIGNED, ASSIGNED, ACKNOWLEDGED, ESCALATED, RESOLVED, LOST
+  assignedMembershipId      String?
+  priority                   String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  escalationLevel            Int       @default(0)
+  maxEscalationLevel         Int       @default(3)
+  assignedAt                 DateTime?
+  ackDeadlineAt              DateTime?
+  acknowledgedAt             DateTime?
+  ackMethod                  String?   // MANUAL, NOTE, MESSAGE, CALL, STAGE_CHANGE, APPOINTMENT
+  timeToFirstResponseSeconds Int?
+  notes                      String?
+  metadata                   String    @default("{}") // JSON string
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact           Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedRep       WorkspaceMembership?  @relation("AssignedLeadRep", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  assignmentHistory AssignmentHistory[]
+  recoveryItems     RecoveryQueue[]
+}
+
+model AssignmentRule {
+  id                               String   @id @default(uuid())
+  workspaceId                      String   @unique
+  roundRobinEnabled                Boolean  @default(true)
+  maxOpenLeadsPerRep               Int      @default(10)
+  defaultAckWindowSeconds          Int      @default(300) // 5 minutes default (or 30s in demo)
+  escalationLevels                 Int      @default(3)
+  ackWindowPerLevelSeconds         Int      @default(300)
+  backupMembershipId               String?
+  managerFallbackMembershipId      String?
+  recoveryQueueIdleThresholdMinutes Int      @default(120)
+  isDemoMode                       Boolean  @default(false)
+  demoTimerSeconds                 Int      @default(30)
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AssignmentHistory {
+  id                   String   @id @default(uuid())
+  workspaceId          String
+  leadId               String
+  previousMembershipId String?
+  newMembershipId      String?
+  reason               String   // INITIAL_ROUND_ROBIN, TIMEOUT_ESCALATION, ABSENCE_REASSIGNMENT, MANUAL_OVERRIDE, FALLBACK
+  level                Int      @default(0)
+  triggeredBy          String   @default("SYSTEM") // SYSTEM, USER
+  actorId              String?
+  createdAt            DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model RecoveryQueue {
+  id                     String    @id @default(uuid())
+  workspaceId            String
+  leadId                 String
+  reason                 String    // OVERDUE_ACK, REPEATED_ESCALATION, IDLE_NO_ACTIVITY, UNASSIGNED_FALLBACK
+  escalationCount        Int       @default(0)
+  lastActivityAt         DateTime  @default(now())
+  resolvedAt             DateTime?
+  resolvedByMembershipId String?
+  status                 String    @default("PENDING") // PENDING, RESOLVED
+  notes                  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model Pipeline {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace     Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stages        PipelineStage[]
+  opportunities Opportunity[]
+  customFields  CustomFieldDefinition[]
+}
+
+model PipelineStage {
+  id                 String   @id @default(uuid())
+  workspaceId        String
+  pipelineId         String
+  name               String
+  order              Int      @default(0)
+  color              String   @default("#4F9CF9")
+  isWon              Boolean  @default(false)
+  isLost             Boolean  @default(false)
+  requiredFieldNames String   @default("[]") // JSON string of required field names/keys
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pipeline      Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  opportunities Opportunity[]
+}
+
+model Opportunity {
+  id                   String    @id @default(uuid())
+  workspaceId          String
+  title                String
+  contactId            String
+  companyId            String?
+  pipelineId           String
+  stageId              String
+  expectedValue        Float     @default(0)
+  currency             String    @default("PKR")
+  assignedMembershipId String?
+  status               String    @default("OPEN") // OPEN, WON, LOST
+  expectedCloseDate    DateTime?
+  source               String    @default("INBOUND")
+  customFields         String    @default("{}") // JSON string of custom field key-values
+  paymentStatus        String    @default("UNPAID") // UNPAID, PARTIAL, PAID
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact      Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  company      Company?             @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  pipeline     Pipeline             @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage        PipelineStage        @relation(fields: [stageId], references: [id])
+  assignedRep  WorkspaceMembership? @relation("AssignedOppRep", fields: [assignedMembershipId], references: [id], onDelete: SetNull)
+  appointments Appointment[]
+  payments     Payment[]
+}
+
+model CustomFieldDefinition {
+  id          String   @id @default(uuid())
+  workspaceId String
+  pipelineId  String?
+  entityType  String   // OPPORTUNITY, CONTACT, COMPANY
+  name        String
+  key         String
+  fieldType   String   // TEXT, NUMBER, DATE, DROPDOWN, CHECKBOX
+  options     String   @default("[]") // JSON string of options for dropdown
+  isRequired  Boolean  @default(false)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pipeline  Pipeline? @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, entityType, key])
+}
+
+model Conversation {
+  id            String   @id @default(uuid())
+  workspaceId   String
+  contactId     String
+  channel       String   @default("WHATSAPP") // WHATSAPP, INTERNAL
+  status        String   @default("ACTIVE") // ACTIVE, ARCHIVED
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages  Message[]
+}
+
+model Message {
+  id                String   @id @default(uuid())
+  workspaceId       String
+  conversationId    String
+  direction         String   // INBOUND, OUTBOUND
+  senderId          String?  // Membership ID or customer phone
+  content           String
+  channel           String   @default("WHATSAPP")
+  externalMessageId String?
+  status            String   @default("SENT") // QUEUED, SENT, DELIVERED, READ, FAILED
+  failureReason     String?
+  metadata          String   @default("{}") // JSON string
+  createdAt         DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id                   String    @id @default(uuid())
+  workspaceId          String
+  title                String
+  description          String?
+  contactId            String
+  opportunityId        String?
+  hostMembershipId     String
+  startTime            DateTime
+  endTime              DateTime
+  timezone             String    @default("Asia/Karachi")
+  status               String    @default("SCHEDULED") // SCHEDULED, RESCHEDULED, CANCELLED, COMPLETED
+  googleCalendarEventId String?
+  meetingLink          String?
+  location             String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact     Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  opportunity Opportunity?        @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  hostRep     WorkspaceMembership @relation("HostRep", fields: [hostMembershipId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id                String    @id @default(uuid())
+  workspaceId       String
+  opportunityId     String?
+  contactId         String
+  amount            Float
+  currency          String    @default("PKR")
+  status            String    @default("PENDING") // DRAFT, PENDING, PAID, FAILED, EXPIRED, REFUNDED
+  provider          String    @default("SAFEPAY") // SAFEPAY, CASH, OTHER
+  providerReference String?
+  trackerToken      String?
+  checkoutUrl       String?
+  isSandbox         Boolean   @default(true)
+  webhookReceivedAt DateTime?
+  metadata          String    @default("{}") // JSON string
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationConfig {
+  id                   String    @id @default(uuid())
+  workspaceId          String
+  provider             String    // WHATSAPP, SAFEPAY, GOOGLE_CALENDAR, SMTP, JAZZCASH, EASYPAISA
+  isConnected          Boolean   @default(false)
+  credentialsEncrypted String    @default("{}") // JSON string with redacted/safe storage
+  settings             String    @default("{}") // JSON string with config details
+  lastActivityAt       DateTime?
+  lastError            String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider])
+}
+
+model IntegrationLog {
+  id                String   @id @default(uuid())
+  workspaceId       String
+  provider          String
+  direction         String   // INBOUND, OUTBOUND
+  eventType         String
+  providerReference String?
+  status            String   // SUCCESS, FAILED, RETRYING
+  errorMessage      String?
+  retryCount        Int      @default(0)
+  payloadRedacted   String   @default("{}") // JSON string, secrets stripped
+  createdAt         DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model DurableJob {
+  id             String    @id @default(uuid())
+  workspaceId    String
+  jobType        String    // LEAD_ACK_TIMEOUT, RECOVERY_CHECK, EMAIL_NOTIFICATION
+  targetEntityId String
+  runAt          DateTime
+  status         String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  lastError      String?
+  payload        String    @default("{}") // JSON string
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  workspaceId String
+  actorType   String   // USER, SYSTEM, WEBHOOK
+  actorId     String?
+  actorName   String?
+  action      String   // e.g. LEAD_CREATED, LEAD_ESCALATED, PERMISSION_CHANGED
+  entityType  String   // LEAD, CONTACT, OPPORTUNITY, INTEGRATION, USER
+  entityId    String
+  beforeState String?  // JSON string
+  afterState  String?  // JSON string
+  reason      String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  membershipId String
+  title        String
+  message      String
+  type         String   // LEAD_ASSIGNED, LEAD_ESCALATED, RECOVERY_ALERT, PAYMENT_RECEIVED, APPOINTMENT_ALERT
+  isRead       Boolean  @default(false)
+  linkUrl      String?
+  createdAt    DateTime @default(now())
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  membership WorkspaceMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([membershipId, isRead])
+}
+
+model SavedFilter {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  membershipId String
+  entityType   String   // LEADS, OPPORTUNITIES, CONTACTS
+  name         String
+  criteria     String   // JSON string of criteria
+  createdAt    DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model UserPreference {
+  id               String   @id @default(uuid())
+  userId           String
+  workspaceId      String
+  dashboardWidgets String   @default("[\"leadsToday\",\"pipelineValue\",\"firstResponseTime\",\"recoveryQueue\",\"escalations24h\",\"availability\",\"appointments\",\"paymentsMonth\"]") // JSON array
+  theme            String   @default("light")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+}
